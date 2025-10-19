@@ -1,6 +1,6 @@
 import polars as pl
-import numpy as np
 from typing import List, Dict
+from sklearn.linear_model import LinearRegression
 
 def select_cols(data: pl.DataFrame, tickers: List[str]) -> pl.DataFrame:
     return data.select(pl.col(tickers))
@@ -76,3 +76,20 @@ def calc_max_dd(data: pl.DataFrame, ticker: str) -> Dict:   #@save
         "drawdown": df.select(pl.col(["Date", "drawdown"]))
     }
     return result
+
+
+def calc_beta(data: pl.DataFrame, X: str|List[str], y: str):
+    """
+    Calculate the beta of y on X (y regressed on X)
+    """
+    y_df = data.select(pl.col(y)).to_numpy().reshape(-1, 1)
+    if isinstance(X, str):
+        X_df = data.select(pl.col(X)).to_numpy().reshape(-1, 1)
+    elif isinstance(X, list):
+        X_df = data.select(pl.col(X)).to_numpy()
+    
+    beta = LinearRegression().fit(X=X_df, y=y_df).coef_[0]
+    beta_df = pl.DataFrame({
+        "Tickers": X, f"Beta ({y})": beta
+    })
+    return beta_df
