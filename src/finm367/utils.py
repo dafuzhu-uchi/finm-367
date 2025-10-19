@@ -2,7 +2,6 @@ import polars as pl
 from openpyxl import load_workbook
 from pathlib import Path
 from typing import List, Dict
-import altair as alt
 
 def print_sheetname(FILE_PATH: Path) -> List:  #@save
     wb = load_workbook(FILE_PATH, read_only=True)
@@ -11,31 +10,14 @@ def print_sheetname(FILE_PATH: Path) -> List:  #@save
     return result
 
 
+def only_numeric(data: pl.DataFrame) -> pl.DataFrame:
+    numeric = [pl.Float64, pl.Float32, pl.Int64, pl.Int32, pl.Int16, pl.Int8]
+    cols = [col for col in data.columns if col.dtype in numeric]
+    return data.select(pl.col(cols))
+
+
 def get_tickers(data: pl.DataFrame) -> List[str]:
-    return data.select(pl.col(pl.Float64)).columns
-
-
-def plot_line(
-        data: pl.DataFrame, 
-        x: str, 
-        y: str|List[str]
-    ) -> alt.Chart:
-    """
-    Time series line plot 
-    Args
-        - data: columns ["Date", "var1", "var2", ...]
-        - x: Column name for x
-        - y: Column name or name list for y
-    """
-    df_long = data.unpivot(
-        on=y, index=x, variable_name="Variable", value_name="Value"
-    )
-    chart = alt.Chart(df_long).mark_line().encode(
-        x=f'{x}:T',
-        y='Value:Q',
-        color='Variable:N'
-    ).properties(width=500)
-    return chart
+    return only_numeric(data).columns
 
 
 def concat_with_labels(

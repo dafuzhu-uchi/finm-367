@@ -286,3 +286,40 @@ def calc_reg_metrics_batch(
     final_df = pl.concat(results, how="vertical")
     
     return final_df
+
+
+def calc_cov(dfs, columns=None):
+    """
+    Calculate covariance matrix from a Polars DataFrame.
+    
+    Parameters:
+    -----------
+    dfs : pl.DataFrame
+        Input DataFrame
+    columns : list, optional
+        List of column names to include. If None, uses all numeric columns.
+    
+    Returns:
+    --------
+    cov_matrix : np.ndarray
+        Covariance matrix
+    column_names : list
+        List of column names in the order they appear in the matrix
+    """
+    
+    # Select numeric columns if not specified
+    if columns is None:
+        columns = [col for col in dfs.columns if dfs[col].dtype in 
+                   [pl.Float64, pl.Float32, pl.Int64, pl.Int32, pl.Int16, pl.Int8]]
+    
+    # Select only the specified columns
+    df_subset = dfs.select(columns)
+    data = df_subset.to_numpy()
+    
+    # Calculate covariance matrix
+    cov_matrix = np.cov(data, rowvar=False)
+    cov_df = pl.DataFrame({
+        col: cov_matrix[i] for i, col in enumerate(columns)
+    })
+    
+    return cov_df
