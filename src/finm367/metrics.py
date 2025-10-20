@@ -2,13 +2,17 @@ import polars as pl
 import numpy as np
 from typing import List, Dict, Literal
 from sklearn.linear_model import LinearRegression
-from finm367.utils import only_numeric
+from scipy import stats
+import statsmodels.api as sm
+import pandas as pd
+from finm367.utils import only_numeric, load_path
 
 
 def select_cols(dfs: pl.DataFrame, tickers: List[str]) -> pl.DataFrame:
     return dfs.select(pl.col(tickers))
 
 
+# Tail risk: skewness, kurtosis
 def calc_moment(dfs: pl.DataFrame, m: int) -> pl.DataFrame:
     """
     Calculate moment for return dataframe
@@ -20,15 +24,46 @@ def calc_moment(dfs: pl.DataFrame, m: int) -> pl.DataFrame:
     m: int
         moment (m >= 3)
     """
-    return dfs.select(
-        pl.col(pl.Float64)
-    ).with_columns(
-        (
-            (pl.all() - pl.all().mean()).pow(m) / (pl.len() - 1)
-        ).truediv(
-            pl.all().std().pow(m)
-        )
-    ).sum()
+
+    def _skew(col):
+        x = dfs[col].drop_nulls()
+        return stats.skew(x, bias=False) if len(x) > 2 else np.nan
+
+    def _ex_kurt(col):
+        x = dfs[col].drop_nulls()
+        return stats.kurtosis(x, fisher=True, bias=False) if len(x) > 3 else np.nan
+
+    if m == 3:
+        return pl.DataFrame({col: _skew(col) for col in dfs.columns})
+    else:
+        return pl.DataFrame({col: _ex_kurt(col) for col in dfs.columns})
+
+
+# Tail risk: VaR, cVaR
+def var_cvar(data, a=0.05):
+    """
+    Calculate var/cvar based on monthly returns
+
+    Args:
+        data: monthly return
+        a: percentile
+    Return:
+        var(.05) / cvar(.05)
+    """
+    names = data.schema.names()
+    var_list = []
+    cvar_list = []
+    for name in names:
+        var = data[name].quantile(a)
+        var_list.append(var)
+        cvar = data[name].filter(data[name].le(var)).mean()
+        cvar_list.append(cvar)
+    result = pl.DataFrame({
+        "tickers": names,
+        "var": var_list,
+        "cvar": cvar_list
+    })
+    return result
 
 
 def calc_max_dd(dfs: pl.DataFrame, ticker: str, date_col: str) -> Dict:   #@save
@@ -125,8 +160,9 @@ def calc_reg_metrics(
     data: pl.DataFrame,
     X: str | List[str],
     y: str,
-    metrics: List[str] | Literal["all"] = "all",
-    freq: int = 52
+    freq: int,
+    rf: float = 0,
+    metrics: List[str] | Literal["all"] = "all"
 ) -> pl.DataFrame:
     """
     Calculate regression metrics for y regressed on X.
@@ -142,9 +178,11 @@ def calc_reg_metrics(
         Independent variable(s) - column name(s) for predictor(s)
     y : str
         Dependent variable - column name for outcome
+    rf: float
+        risk-free rate
     metrics : List[str] or "all", default "all"
         Metrics to calculate.
-        Options: ["alpha", "beta", "info_ratio", "r_squared"]
+        Options: ["alpha", "beta", "info_ratio", "treynor", "r_squared"]
         Use "all" for all metrics (only works with single X)
     freq : int, default 52
         Number of periods per year for annualization (52 for weekly, 252 for daily)
@@ -153,6 +191,7 @@ def calc_reg_metrics(
     -------
     pl.DataFrame
         DataFrame with requested regression metrics
+        ["alpha", "beta", "info_ratio", "treynor", "r_squared"]
         - For single X: one row with all metrics
         - For multiple X: one row per X variable with beta values
     """
@@ -177,8 +216,7 @@ def calc_reg_metrics(
         raise TypeError(f"X must be str or List[str], got {type(X)}")
     
     # Fit regression
-    model = LinearRegression()
-    model.fit(X_data, y_data)
+    model = LinearRegression().fit(X_data, y_data)
     
     # Get coefficients
     if X_data.shape[1] == 1:    # bivariate
@@ -199,7 +237,7 @@ def calc_reg_metrics(
     
     # Determine which metrics to calculate
     if metrics == "all":
-        metrics_to_calc = ["alpha", "beta", "info_ratio", "r_squared"]
+        metrics_to_calc = ["alpha", "beta", "info_ratio", "treynor", "r_squared"]
     else:
         metrics_to_calc = metrics
     
@@ -209,26 +247,38 @@ def calc_reg_metrics(
     if "beta" in metrics_to_calc:
         result_dict["beta"] = beta
     
-    if any(m in metrics_to_calc for m in ["alpha", "info_ratio", "treynor_ratio", "r_squared"]):
+    if any(m in metrics_to_calc for m in ["alpha", "info_ratio", "treynor", "r_squared"]):
         # Get predictions and residuals
         y_pred = model.predict(X_data)
         residuals = y_data - y_pred
         
         # Alpha
-        alpha_per_period = model.intercept_[0]
-        alpha_annualized = alpha_per_period * freq
+        alpha = model.intercept_[0]
+        # alpha_annualized = alpha_per_period * freq
+
+        # Treynor
+        mean_ann = data.select(pl.col(y)).mean().to_numpy()[0] * freq
+        rf_ann = rf * freq
         
         if "alpha" in metrics_to_calc:
-            result_dict["alpha"] = alpha_annualized
+            result_dict["alpha"] = alpha * freq
         
         # Information ratio
         if "info_ratio" in metrics_to_calc:
             residual_std = np.std(residuals, ddof=1)
             if residual_std:
-                info_ratio = alpha_annualized / (residual_std * np.sqrt(freq))
+                ir = alpha / residual_std
+                ir_ann = ir * np.sqrt(freq)
             else:
-                info_ratio = None
-            result_dict["info_ratio"] = info_ratio
+                ir_ann = np.nan
+            result_dict["info_ratio"] = ir_ann
+
+        # Treynor ratio
+        if "treynor" in metrics_to_calc:
+            treynor = np.nan
+            if beta != 0:
+                treynor = (mean_ann - rf_ann) / beta
+            result_dict["treynor"] = treynor
         
         # R-squared
         if "r_squared" in metrics_to_calc:
@@ -252,7 +302,7 @@ def calc_reg_metrics_batch(
     X: str,
     y_cols: List[str],
     metrics: List[str] | Literal["all"] = "all",
-    periods_per_year: int = 52
+    freq: int = 52
 ) -> pl.DataFrame:
     """
     Calculate regression metrics for multiple y variables against a single X.
@@ -268,7 +318,7 @@ def calc_reg_metrics_batch(
         List of dependent variables - column names for outcomes (e.g., ["AAPL", "NVDA"])
     metrics : List[str] or "all", default "all"
         Metrics to calculate. Options: ["alpha", "beta", "info_ratio", "r_squared"]
-    periods_per_year : int, default 52
+    freq : int, default 52
         Number of periods per year for annualization
     
     Returns
@@ -284,7 +334,7 @@ def calc_reg_metrics_batch(
             X=X,
             y=y_col,
             metrics=metrics,
-            freq=periods_per_year
+            freq=freq
         )
         results.append(result)
     
@@ -327,3 +377,15 @@ def calc_cov(data, columns=None):
     })
     
     return cov_df
+
+
+if __name__ == "__main__":
+    file_name = "proshares_analysis_data_ta.xlsx"
+    file_path = load_path(file_name)
+    mer_fac = pl.read_excel(file_path, sheet_name="merrill_factors")
+    mer_fac = mer_fac[:-1]
+    df_pandas = pd.read_excel(file_path, sheet_name="hedge_fund_series", index_col=0)
+    df_polars = pl.from_pandas(df_pandas.reset_index()).rename({"index": "Date"}).drop_nulls()
+    monthly_ret = df_polars.select(pl.col(pl.Float64))
+    concat_df = pl.concat([monthly_ret, pl.DataFrame(mer_fac["SPY US Equity"])], how="horizontal")
+    x = calc_reg_metrics(concat_df, X="SPY US Equity", y="MLEIFCTR Index", freq=12)

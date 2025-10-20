@@ -3,6 +3,11 @@ from openpyxl import load_workbook
 from pathlib import Path
 from typing import List, Dict
 
+def load_path(file_name):
+    data_path = Path.cwd().parents[1] / "data"
+    file_path = data_path / file_name
+    return file_path
+
 def print_sheetname(FILE_PATH: Path) -> List:  #@save
     wb = load_workbook(FILE_PATH, read_only=True)
     result = wb.sheetnames
