@@ -136,3 +136,12 @@ def plot_corr(
     
     return fig, ax
 
+
+def plot_bar(data: pl.DataFrame, figsize: Tuple[int]=(10, 4)):
+    plt.figure(figsize=figsize)
+    plt.bar(data.columns, data.to_numpy()[0])
+    plt.xlabel("Columns")
+    plt.ylabel("Values")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()

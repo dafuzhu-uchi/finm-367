@@ -2,6 +2,8 @@ import polars as pl
 import numpy as np
 from typing import List, Dict, Literal
 from sklearn.linear_model import LinearRegression
+from finm367.utils import only_numeric
+
 
 def select_cols(dfs: pl.DataFrame, tickers: List[str]) -> pl.DataFrame:
     return dfs.select(pl.col(tickers))
@@ -107,10 +109,12 @@ def calc_beta(dfs: pl.DataFrame, X: str|List[str], y: str):
     y_df = dfs.select(pl.col(y)).to_numpy().reshape(-1, 1)
     if isinstance(X, str):
         X_df = dfs.select(pl.col(X)).to_numpy().reshape(-1, 1)
-    elif isinstance(X, list):
+    else:
         X_df = dfs.select(pl.col(X)).to_numpy()
     
-    beta = LinearRegression().fit(X=X_df, y=y_df).coef_[0]
+    model = LinearRegression()
+    model.fit(X=X_df, y=y_df)
+    beta = model.coef_[0]
     beta_df = pl.DataFrame({
         "Tickers": X, f"Beta ({y})": beta
     })
@@ -139,7 +143,8 @@ def calc_reg_metrics(
     y : str
         Dependent variable - column name for outcome
     metrics : List[str] or "all", default "all"
-        Metrics to calculate. Options: ["alpha", "beta", "info_ratio", "r_squared"]
+        Metrics to calculate.
+        Options: ["alpha", "beta", "info_ratio", "r_squared"]
         Use "all" for all metrics (only works with single X)
     freq : int, default 52
         Number of periods per year for annualization (52 for weekly, 252 for daily)
@@ -151,7 +156,7 @@ def calc_reg_metrics(
         - For single X: one row with all metrics
         - For multiple X: one row per X variable with beta values
     """
-    data = data.select(pl.col(pl.Float64))
+    data = only_numeric(data)
 
     # Extract y data
     y_data = data.select(pl.col(y)).to_numpy().reshape(-1, 1)
@@ -172,7 +177,8 @@ def calc_reg_metrics(
         raise TypeError(f"X must be str or List[str], got {type(X)}")
     
     # Fit regression
-    model = LinearRegression().fit(X_data, y_data)
+    model = LinearRegression()
+    model.fit(X_data, y_data)
     
     # Get coefficients
     if X_data.shape[1] == 1:    # bivariate
@@ -203,7 +209,7 @@ def calc_reg_metrics(
     if "beta" in metrics_to_calc:
         result_dict["beta"] = beta
     
-    if any(m in metrics_to_calc for m in ["alpha", "info_ratio", "r_squared"]):
+    if any(m in metrics_to_calc for m in ["alpha", "info_ratio", "treynor_ratio", "r_squared"]):
         # Get predictions and residuals
         y_pred = model.predict(X_data)
         residuals = y_data - y_pred
@@ -288,13 +294,13 @@ def calc_reg_metrics_batch(
     return final_df
 
 
-def calc_cov(dfs, columns=None):
+def calc_cov(data, columns=None):
     """
     Calculate covariance matrix from a Polars DataFrame.
     
     Parameters:
     -----------
-    dfs : pl.DataFrame
+    data : pl.DataFrame
         Input DataFrame
     columns : list, optional
         List of column names to include. If None, uses all numeric columns.
@@ -308,16 +314,14 @@ def calc_cov(dfs, columns=None):
     """
     
     # Select numeric columns if not specified
+    df_subset = data
     if columns is None:
-        columns = [col for col in dfs.columns if dfs[col].dtype in 
-                   [pl.Float64, pl.Float32, pl.Int64, pl.Int32, pl.Int16, pl.Int8]]
-    
-    # Select only the specified columns
-    df_subset = dfs.select(columns)
-    data = df_subset.to_numpy()
+        df_subset = only_numeric(data)
+
+    df_numpy = df_subset.to_numpy()
     
     # Calculate covariance matrix
-    cov_matrix = np.cov(data, rowvar=False)
+    cov_matrix = np.cov(df_numpy, rowvar=False)
     cov_df = pl.DataFrame({
         col: cov_matrix[i] for i, col in enumerate(columns)
     })

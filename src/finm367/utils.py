@@ -12,7 +12,7 @@ def print_sheetname(FILE_PATH: Path) -> List:  #@save
 
 def only_numeric(data: pl.DataFrame) -> pl.DataFrame:
     numeric = [pl.Float64, pl.Float32, pl.Int64, pl.Int32, pl.Int16, pl.Int8]
-    cols = [col for col in data.columns if col.dtype in numeric]
+    cols = [col for col in data.columns if data[col].dtype in numeric]
     return data.select(pl.col(cols))
 
 
@@ -73,3 +73,25 @@ def concat_with_labels(
         raise ValueError(f"label_position must be 'first' or 'last', got '{label_position}'")
     
     return result
+
+def broadcast_rows(
+    df: pl.DataFrame,
+    scaler: pl.DataFrame
+) -> pl.DataFrame:
+    """
+    Broadcast rows according to scaler.
+
+    Parameters
+    ----------
+    df : pl.DataFrame, shape (n_rows, n_cols)
+        DataFrame to broadcast.
+    scaler : pl.DataFrame, shape (1, n_cols)
+        Scaler DataFrame.
+
+    Returns
+    -------
+    broadcasted dataframe, shape (n_rows, n_cols)
+    """
+    if df.columns != scaler.columns:
+        raise ValueError("DataFrames must have same columns")
+    return pl.DataFrame([df[col] * scaler[col] for col in df.columns])
