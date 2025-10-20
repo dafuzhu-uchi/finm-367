@@ -14,6 +14,8 @@ def print_sheetname(FILE_PATH: Path) -> List:  #@save
     wb.close()
     return result
 
+def to_frame(series):
+    return series.to_frame() if isinstance(series, pl.Series) else series
 
 def only_numeric(data: pl.DataFrame) -> pl.DataFrame:
     numeric = [pl.Float64, pl.Float32, pl.Int64, pl.Int32, pl.Int16, pl.Int8]

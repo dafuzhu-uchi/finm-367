@@ -1,11 +1,11 @@
 import polars as pl
+import polars.selectors as cs
 import numpy as np
 from typing import List, Dict, Literal
 from sklearn.linear_model import LinearRegression
 from scipy import stats
-import statsmodels.api as sm
 import pandas as pd
-from finm367.utils import only_numeric, load_path
+from finm367.utils import *
 
 
 def select_cols(dfs: pl.DataFrame, tickers: List[str]) -> pl.DataFrame:
@@ -40,7 +40,7 @@ def calc_moment(dfs: pl.DataFrame, m: int) -> pl.DataFrame:
 
 
 # Tail risk: VaR, cVaR
-def var_cvar(data, a=0.05):
+def var_cvar(data, labels=None, a=0.05):
     """
     Calculate var/cvar based on monthly returns
 
@@ -50,7 +50,8 @@ def var_cvar(data, a=0.05):
     Return:
         var(.05) / cvar(.05)
     """
-    names = data.schema.names()
+    data = to_frame(data)
+    names = labels if labels is not None else data.columns
     var_list = []
     cvar_list = []
     for name in names:
@@ -59,11 +60,53 @@ def var_cvar(data, a=0.05):
         cvar = data[name].filter(data[name].le(var)).mean()
         cvar_list.append(cvar)
     result = pl.DataFrame({
-        "tickers": names,
+        "Asset": names,
         "var": var_list,
         "cvar": cvar_list
     })
     return result
+
+
+def param_var_cvar(
+        rets: pl.DataFrame|pl.Series,
+        freq: int,
+        conditional: bool=False,
+        type: str="var",
+        q: float=.05
+    ) -> pl.DataFrame:
+    """
+    Parametric VaR and cVaR, assume normal distribution
+    Args:
+        - rets: rows are periodic returns, cols are tickers
+        - freq: total periods
+        - conditional: assume normal dist or not
+        - type: "var" or "cvar"
+        - q: quantile
+    Return:
+        - a 1*(rets.width) shape DataFrame
+    """
+    z = stats.norm.ppf(q)
+    vol_annual = annual_rolling_vol(rets, freq)[-1, :]
+    vol_daily = vol_annual / np.sqrt(freq)
+
+    def _cvar(series: pl.Series) -> pl.Float64:
+        return series.filter(series <= series.quantile(q)).mean()
+
+    if type == "var":
+        if not conditional:
+            var = rets.quantile(q)
+            return var
+        else:
+            # assume daily mean is 0
+            return 0 + vol_daily * z
+    elif type == "cvar":
+        if not conditional:
+            cvar = rets.select(pl.all().map_batches(_cvar, returns_scalar=True))
+            return cvar
+        else:
+            return 0 + vol_daily * (-1) * stats.norm.pdf(z) / q
+    else:
+        raise ValueError(f"Unknown type: {type}")
 
 
 def calc_max_dd(dfs: pl.DataFrame, ticker: str, date_col: str) -> Dict:   #@save
@@ -377,6 +420,21 @@ def calc_cov(data, columns=None):
     })
     
     return cov_df
+
+
+def annual_rolling_vol(rets: pl.DataFrame|pl.Series, freq, window=26) -> pl.DataFrame:
+    """
+    For each security, calculate the rolling volatility series, sigma_t, with a window
+    The value at sigma_t denotes the estimate using data through time t-1,
+    and thus (potentially) predicting the volatility at sigma_t
+    """
+    rets = to_frame(rets)
+    res = rets.with_columns(
+        pl.all().rolling_std(window_size=window)
+        .mul(np.sqrt(freq)).name.suffix("_vol")
+    ).drop_nulls()
+
+    return res.select(cs.ends_with("_vol")).rename(lambda col: col[:-4])
 
 
 if __name__ == "__main__":
