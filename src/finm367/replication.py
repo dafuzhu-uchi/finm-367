@@ -2,7 +2,7 @@ import polars as pl
 from dataclasses import dataclass
 from typing import List, Tuple
 from sklearn.linear_model import LinearRegression
-from finm367.utils import *
+from src.finm367.utils import *
 import numpy as np
 
 
@@ -17,7 +17,11 @@ class OLSReplication:
     tracking_error_ann: float
 
 
-def ols_replicate(target: pl.Series, factors: pl.DataFrame, freq: int) -> OLSReplication:
+def ols_replicate(
+        target: pl.Series,
+        factors: pl.DataFrame,
+        freq: int
+    ) -> OLSReplication:
     """
     Perform OLS regression to replicate a target return series using factor exposures.
 
@@ -70,7 +74,6 @@ def ols_replicate(target: pl.Series, factors: pl.DataFrame, freq: int) -> OLSRep
 
 def rolling_replication_oos(target, factors, window):
     """
-
     Parameters
     ----------
     target : pl.Series or pl.DataFrame

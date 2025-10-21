@@ -2,6 +2,9 @@ import polars as pl
 from openpyxl import load_workbook
 from pathlib import Path
 from typing import List, Dict
+from datetime import datetime
+import calendar
+import math
 
 def load_path(file_name):
     data_path = Path.cwd().parents[1] / "data"
@@ -102,3 +105,61 @@ def broadcast_rows(
     if df.columns != scaler.columns:
         raise ValueError("DataFrames must have same columns")
     return pl.DataFrame([df[col] * scaler[col] for col in df.columns])
+
+
+def parse_date(date_str: str, is_end: bool = False) -> datetime:
+    """Parse date string with flexible format, defaulting to first day."""
+    if date_str is None:
+        return None
+
+    # Try different formats
+    for fmt in ["%Y-%m-%d", "%Y-%m", "%Y"]:
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            if fmt == "%Y-%m" and is_end:
+                last_day = calendar.monthrange(dt.year, dt.month)[1]
+                return dt.replace(day=last_day)
+            elif fmt == "%Y" and is_end:
+                return dt.replace(month=12, day=31)
+            return dt
+        except ValueError:
+            continue
+
+    raise ValueError(f"Date string '{date_str}' doesn't match any supported format (%Y-%m-%d, %Y-%m, or %Y)")
+
+
+def get_period(
+        data: pl.DataFrame,
+        start_str: str = None,
+        end_str: str = None
+) -> pl.DataFrame:
+    """
+    Args:
+        - data: pl.DataFrame
+        - start_str: Date string in format %Y-%m-%d, %Y-%m, or %Y
+        - end_str: Date string in format %Y-%m-%d, %Y-%m, or %Y
+    """
+    start_day = parse_date(start_str)
+    end_day = parse_date(end_str, is_end=True)
+
+    if start_day is None and end_day is None:
+        tb = data
+    elif start_day and end_day:
+        tb = data.filter(pl.col("date").is_between(start_day, end_day))
+    elif start_day:
+        tb = data.filter(pl.col("date").ge(start_day))
+    elif end_day:
+        tb = data.filter(pl.col("date").le(end_day))
+
+    return tb
+
+
+def log_series(series: pl.Series) -> pl.Series:
+    return (series + 1).log(base=math.exp(1))
+
+
+def log_dataframe(df: pl.DataFrame) -> pl.DataFrame:
+    return df.with_columns([
+        log_series(pl.col(col)).alias(col)
+        for col in df.columns if df.schema[col] == pl.Float64
+    ])

@@ -5,8 +5,8 @@ import numpy as np
 from scipy.optimize import minimize
 from typing import Literal
 from dataclasses import dataclass
-from finm367.utils import only_numeric, broadcast_rows
-from finm367.metrics import calc_cov
+from src.finm367.utils import only_numeric, broadcast_rows
+from src.finm367.metrics import calc_cov
 
 
 @dataclass

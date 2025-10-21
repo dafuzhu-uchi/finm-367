@@ -5,7 +5,7 @@ from typing import List, Dict, Literal
 from sklearn.linear_model import LinearRegression
 from scipy import stats
 import pandas as pd
-from finm367.utils import *
+from src.finm367.utils import *
 
 
 def select_cols(dfs: pl.DataFrame, tickers: List[str]) -> pl.DataFrame:
